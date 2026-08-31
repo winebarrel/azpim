@@ -10,6 +10,27 @@ Covers Microsoft Entra ID directory roles and PIM for Groups. Both are
 "selfActivate" operations, so azpim only ever acts as the signed-in user on
 that user's own eligible assignments — there is no app-only mode.
 
+## Installation
+
+Download an archive for your platform from the
+[releases page](https://github.com/winebarrel/azpim/releases) and put the
+`azpim` binary somewhere on your `PATH`:
+
+```
+tar xzf azpim_Darwin_arm64.tar.gz
+install azpim /usr/local/bin/
+```
+
+`checksums.txt` in each release covers the archives, if you want to verify one.
+
+Or build it yourself with Go 1.27 or later:
+
+```
+go install github.com/winebarrel/azpim/cmd/azpim@latest
+```
+
+Either way, `azpim --version` reports what you have.
+
 ## Usage
 
 ```
