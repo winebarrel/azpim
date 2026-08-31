@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -273,4 +274,85 @@ func TestClientErrorMentioningClaims(t *testing.T) {
 
 	assert.Empty(graphErr.ClaimsChallenge())
 	assert.Empty((&azpim.Error{Message: "no challenge here"}).ClaimsChallenge())
+}
+
+// abortingServer answers once as told and then drops the connection, which is
+// how a transport failure is provoked without an unroutable address.
+func abortingServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Request, calls int)) *httptest.Server {
+	t.Helper()
+
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+
+		handler(w, r, calls)
+	}))
+
+	// An aborted handler is the point of this server, not a fault to report.
+	server.Config.ErrorLog = log.New(io.Discard, "", 0)
+
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+// TestClientClaimsChallengeRetryUnreachable covers the retry itself failing to
+// reach Graph, which is a transport error and not a refusal to dress up as one.
+func TestClientClaimsChallengeRetryUnreachable(t *testing.T) {
+	assert := assert.New(t)
+
+	server := abortingServer(t, func(w http.ResponseWriter, _ *http.Request, calls int) {
+		if calls == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(acrsBody))
+
+			return
+		}
+
+		panic(http.ErrAbortHandler)
+	})
+
+	client := &azpim.Client{
+		BaseURL: server.URL,
+		Token:   "plain-token",
+		Reauth: func(context.Context, string) (string, error) {
+			return "acrs-token", nil
+		},
+	}
+
+	err := client.Post(context.Background(), "/requests", map[string]string{}, nil)
+
+	assert.Error(err)
+
+	var graphErr *azpim.Error
+	assert.NotErrorAs(err, &graphErr, "a connection that died is not an answer from Graph")
+}
+
+// TestClientResponseBodyTruncated covers a reply that stops partway through,
+// which must not be decoded as though it had arrived whole.
+func TestClientResponseBodyTruncated(t *testing.T) {
+	assert := assert.New(t)
+
+	server := abortingServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		// A length longer than what follows leaves the read waiting for bytes
+		// the aborted connection never delivers. The flush is what puts the
+		// head on the wire, so the failure lands on the body rather than on
+		// the request.
+		w.Header().Set("Content-Length", "128")
+		_, _ = w.Write([]byte(`{"status":"Prov`))
+		w.(http.Flusher).Flush()
+
+		panic(http.ErrAbortHandler)
+	})
+
+	client := &azpim.Client{BaseURL: server.URL, Token: "test-token"}
+
+	var result struct {
+		Status string `json:"status"`
+	}
+
+	err := client.Get(context.Background(), "/anything", nil, &result)
+
+	assert.Error(err)
+	assert.Empty(result.Status)
 }

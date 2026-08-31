@@ -831,3 +831,45 @@ func TestAuthenticatorClaimsSkipsRefresh(t *testing.T) {
 	assert.NoError(err)
 	assert.Equal("authorization_code", stub.form.Get("grant_type"))
 }
+
+// TestAuthenticatorClientReauth covers the way back from a challenged call to
+// a sign-in: the client the commands hold has to be able to ask for a token
+// carrying the claims, for the same scopes it was built with.
+func TestAuthenticatorClientReauth(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var seen url.Values
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: t.TempDir(),
+	}
+
+	auth.Browser = func(target string) error {
+		parsed, err := url.Parse(target)
+		require.NoError(t, err)
+
+		seen = parsed.Query()
+
+		var challenge string
+
+		return browser(t, &challenge, nil)(target)
+	}
+
+	client, err := auth.Client(context.Background(), []string{"openid", "Scope.One"})
+	require.NoError(t, err)
+	require.NotNil(t, client.Reauth)
+
+	stub.reply = `{"access_token":"access-acrs","refresh_token":"refresh-1","expires_in":3600}`
+	claims := `{"access_token":{"acrs":{"essential":true, "value":"c1"}}}`
+
+	token, err := client.Reauth(context.Background(), claims)
+
+	assert.NoError(err)
+	assert.Equal("access-acrs", token)
+	assert.Equal(claims, seen.Get("claims"))
+	assert.Equal("openid Scope.One", seen.Get("scope"), "the challenge is answered for the scopes the client holds")
+}
