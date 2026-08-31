@@ -1,5 +1,9 @@
 # azpim
 
+[![CI](https://github.com/winebarrel/azpim/actions/workflows/ci.yml/badge.svg)](https://github.com/winebarrel/azpim/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/winebarrel/azpim/branch/main/graph/badge.svg)](https://codecov.io/gh/winebarrel/azpim)
+[![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic)](https://claude.ai/claude-code)
+
 Activate and deactivate your own Azure PIM assignments from the command line.
 
 Covers Microsoft Entra ID directory roles and PIM for Groups. Both are
