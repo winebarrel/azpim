@@ -70,9 +70,10 @@ $ azpim role deactivate "global reader"
 deactivated Global Reader (Revoked)
 ```
 
-Roles and groups are matched against their display name, case-insensitively.
-A query matching more than one is an error listing the candidates rather than a
-guess, since activating the wrong role is not a harmless mistake.
+Roles and groups are named by their display name in full, case-insensitively.
+The match is exact, because one role's name can be contained in another's, and
+a name matching more than one assignment is an error listing the candidates
+rather than a guess, since activating the wrong role is not a harmless mistake.
 
 `--duration` takes a Go duration (`8h`, `1h30m`) or ISO 8601 (`PT8H`, `P1D`).
 It defaults to 8 hours and must stay within the role's PIM policy.

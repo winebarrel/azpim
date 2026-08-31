@@ -129,7 +129,7 @@ func TestGroupActivateCmd(t *testing.T) {
 			name:   "no match",
 			group:  "nonexistent",
 			access: "any",
-			errMsg: "no eligible assignment matches",
+			errMsg: "no eligible assignment is named",
 		},
 	}
 
