@@ -231,7 +231,12 @@ func (a *Authenticator) signIn(ctx context.Context, scopes []string) (*tokenResp
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	go server.Serve(listener) //nolint:errcheck
+	// Serve always returns a non-nil error. Discarding it would turn a listener
+	// that died on its own into a silent wait for a redirect that can no longer
+	// arrive, so it is selected on below alongside the redirect itself.
+	serveErr := make(chan error, 1)
+
+	go func() { serveErr <- server.Serve(listener) }()
 
 	defer server.Close() //nolint:errcheck
 
@@ -245,6 +250,10 @@ func (a *Authenticator) signIn(ctx context.Context, scopes []string) (*tokenResp
 
 	select {
 	case query = <-results:
+	case err := <-serveErr:
+		// The deferred Close runs only after this select, so reaching here
+		// means the listener stopped by itself and no redirect is coming.
+		return nil, fmt.Errorf("the loopback listener stopped before the sign-in completed: %w", err)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(signInTimeout):
