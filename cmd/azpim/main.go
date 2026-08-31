@@ -8,6 +8,7 @@ import (
 	"github.com/winebarrel/azpim"
 )
 
+// version is stamped in by GoReleaser at release time.
 var version string
 
 var cli struct {
@@ -26,7 +27,7 @@ func main() {
 		kong.Name("azpim"),
 		kong.Description("Activate and deactivate your own Azure PIM assignments."),
 		kong.Vars{
-			"version":         version,
+			"version":         azpim.Version(version),
 			"defaultClientID": azpim.DefaultClientID,
 		},
 	)

@@ -32,3 +32,6 @@ go.work.sum
 # .vscode/
 # Built binary (anchored, so cmd/azpim/ is not swept up too)
 /azpim
+
+# GoReleaser output
+/dist/
