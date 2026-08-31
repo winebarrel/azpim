@@ -1,0 +1,28 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+      - run: make TEST_OPTS='-coverprofile=coverage.txt'
+      - uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
