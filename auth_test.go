@@ -681,3 +681,153 @@ func TestAuthenticatorCacheFileUnwritable(t *testing.T) {
 
 	assert.Error(err)
 }
+
+// TestAuthenticatorTokenWithClaims covers the sign-in that answers a claims
+// challenge: the claims travel with the authorization request, which is what
+// lets the identity platform stamp the acrs claim PIM checks for.
+func TestAuthenticatorTokenWithClaims(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-acrs","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var seen url.Values
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: t.TempDir(),
+	}
+
+	auth.Browser = func(target string) error {
+		parsed, err := url.Parse(target)
+		require.NoError(t, err)
+
+		seen = parsed.Query()
+
+		var challenge string
+
+		return browser(t, &challenge, nil)(target)
+	}
+
+	claims := `{"access_token":{"acrs":{"essential":true, "value":"c1"}}}`
+	token, err := auth.TokenWithClaims(context.Background(), []string{"openid"}, claims)
+
+	assert.NoError(err)
+	assert.Equal("access-acrs", token)
+	assert.Equal(claims, seen.Get("claims"))
+}
+
+// TestAuthenticatorTokenWithoutClaims checks that an ordinary sign-in asks for
+// no authentication context. Demanding one unprompted would fail in a tenant
+// that has not defined it, and prompt for nothing in one that has.
+func TestAuthenticatorTokenWithoutClaims(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var seen url.Values
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: t.TempDir(),
+	}
+
+	auth.Browser = func(target string) error {
+		parsed, err := url.Parse(target)
+		require.NoError(t, err)
+
+		seen = parsed.Query()
+
+		var challenge string
+
+		return browser(t, &challenge, nil)(target)
+	}
+
+	_, err := auth.Token(context.Background(), []string{"openid"})
+
+	assert.NoError(err)
+	assert.Empty(seen.Get("claims"))
+}
+
+// TestAuthenticatorClaimsKeyTheCache covers a challenged token being filed
+// apart from a plain one, and reused on its own terms.
+func TestAuthenticatorClaimsKeyTheCache(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var challenge string
+
+	signIns := 0
+	dir := t.TempDir()
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: dir,
+	}
+
+	auth.Browser = func(target string) error {
+		signIns++
+
+		return browser(t, &challenge, nil)(target)
+	}
+
+	claims := `{"access_token":{"acrs":{"essential":true, "value":"c1"}}}`
+
+	_, err := auth.Token(context.Background(), []string{"openid"})
+	require.NoError(t, err)
+
+	_, err = auth.TokenWithClaims(context.Background(), []string{"openid"}, claims)
+	require.NoError(t, err)
+
+	// The plain token cannot stand in for the challenged one, so the challenge
+	// costs a sign-in of its own.
+	assert.Equal(2, signIns)
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(entries, 2, "a challenged token gets its own cache entry")
+
+	// A second activation within the token's life reuses it rather than
+	// opening the browser again.
+	_, err = auth.TokenWithClaims(context.Background(), []string{"openid"}, claims)
+	require.NoError(t, err)
+
+	assert.Equal(2, signIns)
+}
+
+// TestAuthenticatorClaimsSkipsRefresh covers a challenge arriving while a
+// refresh token is on hand. Redeeming it would produce a token without the
+// acrs claim, which is the one thing the caller cannot use.
+func TestAuthenticatorClaimsSkipsRefresh(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var challenge string
+
+	dir := t.TempDir()
+	claims := `{"access_token":{"acrs":{"essential":true, "value":"c1"}}}`
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: dir,
+		Browser:  browser(t, &challenge, nil),
+	}
+
+	_, err := auth.TokenWithClaims(context.Background(), []string{"openid"}, claims)
+	require.NoError(t, err)
+
+	// Age the cached token past its life, leaving a refresh token behind.
+	writeCachedToken(t, dir, map[string]any{
+		"access_token":  "stale",
+		"refresh_token": "refresh-1",
+		"expires_at":    time.Now().Add(-time.Hour).Unix(),
+	})
+
+	_, err = auth.TokenWithClaims(context.Background(), []string{"openid"}, claims)
+
+	assert.NoError(err)
+	assert.Equal("authorization_code", stub.form.Get("grant_type"))
+}

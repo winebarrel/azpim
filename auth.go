@@ -54,6 +54,9 @@ type Authenticator struct {
 }
 
 // Client returns a Graph client holding a token good for the given scopes.
+//
+// The client is given a way back here so that a call refused for want of an
+// authentication context can be answered with a token that carries one.
 func (a *Authenticator) Client(ctx context.Context, scopes []string) (*Client, error) {
 	token, err := a.Token(ctx, scopes)
 
@@ -61,7 +64,14 @@ func (a *Authenticator) Client(ctx context.Context, scopes []string) (*Client, e
 		return nil, err
 	}
 
-	return &Client{BaseURL: GraphBaseURL, Token: token, HTTP: a.HTTP}, nil
+	return &Client{
+		BaseURL: GraphBaseURL,
+		Token:   token,
+		HTTP:    a.HTTP,
+		Reauth: func(ctx context.Context, claims string) (string, error) {
+			return a.TokenWithClaims(ctx, scopes, claims)
+		},
+	}, nil
 }
 
 // cachedToken is what is persisted between runs.
@@ -104,13 +114,16 @@ func (a *Authenticator) errOutput() io.Writer {
 	return io.Discard
 }
 
-// cachePath names the cache file for a scope set.
+// cachePath names the cache file for a scope set and claims challenge.
 //
 // The scopes are part of the name because a cached token is only useful for
 // the scopes it was issued with. Keying on them means asking for a different
 // area re-authenticates instead of silently reusing a token that Graph will
-// reject.
-func (a *Authenticator) cachePath(scopes []string) (string, error) {
+// reject. Claims are keyed the same way and for the same reason: a token
+// issued for a challenge is a different token, and filing it separately keeps
+// it from being handed to a plain call, and keeps the plain token from being
+// handed back to the challenge that just refused it.
+func (a *Authenticator) cachePath(scopes []string, claims string) (string, error) {
 	dir := a.CacheDir
 
 	if dir == "" {
@@ -123,7 +136,13 @@ func (a *Authenticator) cachePath(scopes []string) (string, error) {
 		dir = filepath.Join(base, "azpim")
 	}
 
-	sum := sha256.Sum256([]byte(strings.Join(scopes, " ")))
+	key := strings.Join(scopes, " ")
+
+	if claims != "" {
+		key += " " + claims
+	}
+
+	sum := sha256.Sum256([]byte(key))
 	name := fmt.Sprintf("%s-%s.json", a.TenantID, base64.RawURLEncoding.EncodeToString(sum[:6]))
 
 	return filepath.Join(dir, name), nil
@@ -132,7 +151,19 @@ func (a *Authenticator) cachePath(scopes []string) (string, error) {
 // Token returns an access token for the given scopes, reusing a cached one and
 // refreshing it silently where possible.
 func (a *Authenticator) Token(ctx context.Context, scopes []string) (string, error) {
-	path, err := a.cachePath(scopes)
+	return a.TokenWithClaims(ctx, scopes, "")
+}
+
+// TokenWithClaims returns an access token issued to satisfy a claims
+// challenge, or an ordinary one when claims is empty.
+//
+// The claims travel with the sign-in request, which is what lets the identity
+// platform ask for whatever the authentication context requires -- a second
+// factor, a compliant device -- and then stamp the acrs claim PIM checks for
+// into the token. A refresh cannot do that, so a challenge goes straight to
+// the browser rather than trying silently first.
+func (a *Authenticator) TokenWithClaims(ctx context.Context, scopes []string, claims string) (string, error) {
+	path, err := a.cachePath(scopes, claims)
 
 	if err != nil {
 		return "", err
@@ -146,7 +177,7 @@ func (a *Authenticator) Token(ctx context.Context, scopes []string) (string, err
 		return cached.AccessToken, nil
 	}
 
-	if cached != nil && cached.RefreshToken != "" {
+	if cached != nil && cached.RefreshToken != "" && claims == "" {
 		token, err := a.redeem(ctx, url.Values{
 			"grant_type":    {"refresh_token"},
 			"client_id":     {a.ClientID},
@@ -159,7 +190,7 @@ func (a *Authenticator) Token(ctx context.Context, scopes []string) (string, err
 		}
 	}
 
-	token, err := a.signIn(ctx, scopes)
+	token, err := a.signIn(ctx, scopes, claims)
 
 	if err != nil {
 		return "", err
@@ -181,7 +212,7 @@ func (a *Authenticator) store(path string, token *tokenResponse) (string, error)
 }
 
 // signIn runs the interactive half of the flow.
-func (a *Authenticator) signIn(ctx context.Context, scopes []string) (*tokenResponse, error) {
+func (a *Authenticator) signIn(ctx context.Context, scopes []string, claims string) (*tokenResponse, error) {
 	if a.ClientID == "" || a.TenantID == "" {
 		return nil, errors.New("both a tenant and a client id are required to sign in")
 	}
@@ -213,7 +244,7 @@ func (a *Authenticator) signIn(ctx context.Context, scopes []string) (*tokenResp
 		return nil, err
 	}
 
-	target := fmt.Sprintf("%s/%s/oauth2/v2.0/authorize?%s", a.endpoint(), a.TenantID, url.Values{
+	params := url.Values{
 		"client_id":             {a.ClientID},
 		"response_type":         {"code"},
 		"redirect_uri":          {redirect},
@@ -223,7 +254,15 @@ func (a *Authenticator) signIn(ctx context.Context, scopes []string) (*tokenResp
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(challenge[:])},
 		"code_challenge_method": {"S256"},
 		"prompt":                {"select_account"},
-	}.Encode())
+	}
+
+	// The challenge is passed on verbatim: its contents are the tenant's, and
+	// the identity platform is what has to make sense of them.
+	if claims != "" {
+		params.Set("claims", claims)
+	}
+
+	target := fmt.Sprintf("%s/%s/oauth2/v2.0/authorize?%s", a.endpoint(), a.TenantID, params.Encode())
 
 	results := make(chan url.Values, 1)
 	server := &http.Server{

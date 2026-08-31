@@ -95,6 +95,21 @@ Conditional Access authentication-flow policy, which no client-side change can
 work around. The browser flow also runs in your normal browser session, so
 device-compliance conditions are satisfied the same way they are for the portal.
 
+### Multi-factor authentication on activation
+
+A role can sit behind a Conditional Access authentication context, which
+requires you to authenticate again — usually with MFA — at the moment you
+activate rather than when you signed in. PIM refuses such an activation with
+`RoleAssignmentRequestAcrsValidationFailed` and a claims challenge naming the
+context it wants.
+
+azpim answers that challenge: it signs you in again carrying the claims, then
+sends the same request once more. Expect a browser to open mid-command the
+first time, and not again until that token expires — a token issued for a
+challenge is cached apart from the ordinary one. The claims are never sent
+unprompted, because which contexts exist and which roles require them is a
+per-tenant setting.
+
 ### Which application it signs in through
 
 `--client-id` defaults to Microsoft Graph PowerShell
