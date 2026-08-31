@@ -27,7 +27,7 @@ func main() {
 		kong.Name("azpim"),
 		kong.Description("Activate and deactivate your own Azure PIM assignments."),
 		kong.Vars{
-			"version":         azpim.Version(version),
+			"version":         resolveVersion(version),
 			"defaultClientID": azpim.DefaultClientID,
 		},
 	)

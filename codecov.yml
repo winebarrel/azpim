@@ -12,3 +12,7 @@ coverage:
 ignore:
   # kong wiring with nothing to assert that --help does not already prove.
   - "cmd/azpim/main.go"
+  # Reads what the Go toolchain stamped into the binary, which a test binary
+  # never carries: ReadBuildInfo always succeeds there and no vcs.revision is
+  # recorded, so neither fallback is reachable from a test.
+  - "cmd/azpim/version.go"
