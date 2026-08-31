@@ -261,3 +261,39 @@ func TestGroupRequestsCmd(t *testing.T) {
 	assert.Contains(out.String(), "PendingApproval")
 	assert.Equal("5", stub.queryFor(t, "assignmentScheduleRequests").Get("$top"))
 }
+
+// TestGroupRequestRejected covers the service refusing a request that was built
+// correctly, such as a group that is not actually managed by PIM.
+func TestGroupRequestRejected(t *testing.T) {
+	rejection := `400|{"error":{"code":"UnknownError",` +
+		`"message":"{\"errorCode\":\"RoleAssignmentRequestPolicyValidationFailed\",\"message\":\"not eligible\"}"}}`
+
+	tests := map[string]func(*azpim.Context) error{
+		"activate": func(c *azpim.Context) error {
+			return (&azpim.GroupActivateCmd{
+				AccessFilter: azpim.AccessFilter{Access: "member"},
+				Group:        "db-admins",
+				Duration:     "1h",
+			}).Run(c)
+		},
+		"deactivate": func(c *azpim.Context) error {
+			return (&azpim.GroupDeactivateCmd{
+				AccessFilter: azpim.AccessFilter{Access: "member"},
+				Group:        "db-admins",
+			}).Run(c)
+		},
+	}
+
+	for name, run := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			stub := newGraphStub(t, groupRoutes(map[string]string{
+				"assignmentScheduleRequests": rejection,
+			}))
+
+			err := run(stub.context(&bytes.Buffer{}, &bytes.Buffer{}))
+
+			assert.ErrorContains(err, "RoleAssignmentRequestPolicyValidationFailed")
+		})
+	}
+}

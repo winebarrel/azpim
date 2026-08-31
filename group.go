@@ -167,7 +167,9 @@ func (cmd *GroupListCmd) Run(cmdCtx *Context) error {
 		})
 	}
 
-	return writeTable(cmdCtx.Output, []string{"GROUP", "ACCESS", "GROUP ID", "EXPIRES"}, rows)
+	writeTable(cmdCtx.Output, []string{"GROUP", "ACCESS", "GROUP ID", "EXPIRES"}, rows)
+
+	return nil
 }
 
 // GroupActiveCmd lists the group memberships currently assigned.
@@ -201,7 +203,9 @@ func (cmd *GroupActiveCmd) Run(cmdCtx *Context) error {
 		})
 	}
 
-	return writeTable(cmdCtx.Output, []string{"GROUP", "ACCESS", "TYPE", "ENDS"}, rows)
+	writeTable(cmdCtx.Output, []string{"GROUP", "ACCESS", "TYPE", "ENDS"}, rows)
+
+	return nil
 }
 
 // GroupRequestsCmd lists recent activation requests.
@@ -237,7 +241,9 @@ func (cmd *GroupRequestsCmd) Run(cmdCtx *Context) error {
 		})
 	}
 
-	return writeTable(cmdCtx.Output, []string{"CREATED", "GROUP", "ACCESS", "ACTION", "STATUS"}, rows)
+	writeTable(cmdCtx.Output, []string{"CREATED", "GROUP", "ACCESS", "ACTION", "STATUS"}, rows)
+
+	return nil
 }
 
 // GroupActivateCmd activates a group membership.
@@ -287,7 +293,9 @@ func (cmd *GroupActivateCmd) Run(cmdCtx *Context) error {
 
 	label := fmt.Sprintf("%s [%s]", schedule.name(), schedule.AccessID)
 
-	return reportRequest(cmdCtx, label, duration, result.Status)
+	reportRequest(cmdCtx, label, duration, result.Status)
+
+	return nil
 }
 
 // GroupDeactivateCmd gives up a group membership before it expires.
@@ -324,9 +332,9 @@ func (cmd *GroupDeactivateCmd) Run(cmdCtx *Context) error {
 		return err
 	}
 
-	_, err = fmt.Fprintf(cmdCtx.ErrOutput, "deactivated %s [%s] (%s)\n", schedule.name(), schedule.AccessID, result.Status)
+	fmt.Fprintf(cmdCtx.ErrOutput, "deactivated %s [%s] (%s)\n", schedule.name(), schedule.AccessID, result.Status) //nolint:errcheck
 
-	return err
+	return nil
 }
 
 // findGroup resolves a query against the memberships the user is eligible for.

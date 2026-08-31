@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,10 +23,14 @@ import (
 )
 
 // tokenStub stands in for the identity platform's token endpoint.
+//
+// replies keyed by grant type let one stub answer a refresh differently from a
+// code redemption, which is what a rejected refresh token looks like.
 type tokenStub struct {
-	server *httptest.Server
-	form   url.Values
-	reply  string
+	server  *httptest.Server
+	form    url.Values
+	reply   string
+	replies map[string]string
 }
 
 func newTokenStub(t *testing.T, reply string) *tokenStub {
@@ -39,8 +44,14 @@ func newTokenStub(t *testing.T, reply string) *tokenStub {
 		stub.form, err = url.ParseQuery(string(body))
 		require.NoError(t, err)
 
+		reply := stub.reply
+
+		if specific, ok := stub.replies[stub.form.Get("grant_type")]; ok {
+			reply = specific
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(stub.reply))
+		_, _ = w.Write([]byte(reply))
 	}))
 
 	t.Cleanup(stub.server.Close)
@@ -365,4 +376,308 @@ func TestAuthenticatorClientSignInFails(t *testing.T) {
 
 	assert.ErrorContains(err, "client id")
 	assert.Nil(client)
+}
+
+func TestAuthenticatorTokenEndpointRejects(t *testing.T) {
+	tests := map[string]struct {
+		reply  string
+		errMsg string
+	}{
+		"named error": {
+			reply:  `{"error":"invalid_grant","error_description":"the code has expired"}`,
+			errMsg: "invalid_grant: the code has expired",
+		},
+		// A 200 with nothing usable in it must not be mistaken for success.
+		"no token in the response": {
+			reply:  `{"token_type":"Bearer"}`,
+			errMsg: "no access token",
+		},
+		"not json at all": {
+			reply:  `<html>gateway error</html>`,
+			errMsg: "invalid character",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			stub := newTokenStub(t, tt.reply)
+
+			var challenge string
+
+			auth := &azpim.Authenticator{
+				TenantID: "tenant-1",
+				ClientID: "client-1",
+				Endpoint: stub.server.URL,
+				CacheDir: t.TempDir(),
+				Browser:  browser(t, &challenge, nil),
+			}
+
+			_, err := auth.Token(context.Background(), []string{"openid"})
+
+			assert.ErrorContains(err, tt.errMsg)
+		})
+	}
+}
+
+// TestAuthenticatorRefreshRejectedFallsBackToSignIn covers a refresh token the
+// tenant no longer honours, which is what a revoked session or an expired
+// sign-in frequency window looks like. It has to lead to a sign-in rather than
+// to a failure.
+func TestAuthenticatorRefreshRejectedFallsBackToSignIn(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var challenge string
+
+	dir := t.TempDir()
+	scopes := []string{"openid"}
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: dir,
+		Browser:  browser(t, &challenge, nil),
+	}
+
+	_, err := auth.Token(context.Background(), scopes)
+	require.NoError(t, err)
+
+	writeCachedToken(t, dir, map[string]any{
+		"access_token":  "stale",
+		"refresh_token": "no-longer-valid",
+		"expires_at":    time.Now().Add(-time.Hour).Unix(),
+	})
+
+	stub.replies = map[string]string{
+		"refresh_token":      `{"error":"invalid_grant","error_description":"token revoked"}`,
+		"authorization_code": `{"access_token":"access-2","refresh_token":"refresh-2","expires_in":3600}`,
+	}
+
+	signIns := 0
+	auth.Browser = func(target string) error {
+		signIns++
+
+		return browser(t, &challenge, nil)(target)
+	}
+
+	token, err := auth.Token(context.Background(), scopes)
+
+	assert.NoError(err)
+	assert.Equal("access-2", token)
+	assert.Equal(1, signIns)
+}
+
+// TestAuthenticatorTokenEndpointUnreachable covers the network being gone at
+// redemption time, after the browser half has already succeeded.
+func TestAuthenticatorTokenEndpointUnreachable(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{}`)
+	stub.server.Close()
+
+	var challenge string
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: t.TempDir(),
+		Browser:  browser(t, &challenge, nil),
+	}
+
+	_, err := auth.Token(context.Background(), []string{"openid"})
+
+	assert.Error(err)
+}
+
+// TestAuthenticatorDefaultCacheDir covers the path used in real runs, where no
+// cache directory is configured and the OS convention decides.
+func TestAuthenticatorDefaultCacheDir(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+
+	var challenge string
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		Browser:  browser(t, &challenge, nil),
+	}
+
+	token, err := auth.Token(context.Background(), []string{"openid"})
+
+	require.NoError(t, err)
+	assert.Equal("access-1", token)
+
+	base, err := os.UserCacheDir()
+	require.NoError(t, err)
+
+	entries, err := os.ReadDir(filepath.Join(base, "azpim"))
+	require.NoError(t, err)
+	assert.Len(entries, 1)
+}
+
+// TestAuthenticatorCacheUnwritable covers a cache directory that cannot be
+// created. The token was obtained, but failing to persist it silently would
+// mean signing in again on every command with no explanation.
+func TestAuthenticatorCacheUnwritable(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+
+	var challenge string
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: filepath.Join(blocker, "cache"),
+		Browser:  browser(t, &challenge, nil),
+	}
+
+	_, err := auth.Token(context.Background(), []string{"openid"})
+
+	assert.Error(err)
+}
+
+// TestAuthenticatorSignInCancelled covers the caller giving up while the
+// browser half is still outstanding.
+func TestAuthenticatorSignInCancelled(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{}`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: t.TempDir(),
+		// Nothing ever comes back through the redirect.
+		Browser: func(string) error { return nil },
+	}
+
+	_, err := auth.Token(ctx, []string{"openid"})
+
+	assert.ErrorIs(err, context.Canceled)
+}
+
+// TestAuthenticatorBrowserFails covers a machine with no way to open a browser.
+func TestAuthenticatorBrowserFails(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{}`)
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: t.TempDir(),
+		Browser:  func(string) error { return errors.New("no browser available") },
+	}
+
+	_, err := auth.Token(context.Background(), []string{"openid"})
+
+	assert.ErrorContains(err, "no browser available")
+}
+
+// TestAuthenticatorUsesSuppliedHTTPClient covers a caller providing its own
+// transport, which is then used for the token endpoint too.
+func TestAuthenticatorUsesSuppliedHTTPClient(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var challenge string
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: t.TempDir(),
+		HTTP:     stub.server.Client(),
+		Browser:  browser(t, &challenge, nil),
+	}
+
+	client, err := auth.Client(context.Background(), []string{"openid"})
+
+	require.NoError(t, err)
+	assert.Equal("access-1", client.Token)
+}
+
+// TestAuthenticatorIgnoresUnreadableCache covers a cache file left behind in a
+// state that cannot be parsed. It must lead to a sign-in, not to a failure.
+func TestAuthenticatorIgnoresUnreadableCache(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var challenge string
+
+	dir := t.TempDir()
+	scopes := []string{"openid"}
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: dir,
+		Browser:  browser(t, &challenge, nil),
+	}
+
+	_, err := auth.Token(context.Background(), scopes)
+	require.NoError(t, err)
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, entries[0].Name()), []byte("{not json"), 0o600))
+
+	token, err := auth.Token(context.Background(), scopes)
+
+	assert.NoError(err)
+	assert.Equal("access-1", token)
+}
+
+// TestAuthenticatorNoHomeDirectory covers a process with no home directory to
+// derive a default cache location from.
+func TestAuthenticatorNoHomeDirectory(t *testing.T) {
+	assert := assert.New(t)
+
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+
+	auth := &azpim.Authenticator{TenantID: "tenant-1", ClientID: "client-1"}
+
+	_, err := auth.Token(context.Background(), []string{"openid"})
+
+	assert.Error(err)
+}
+
+// TestAuthenticatorCacheFileUnwritable covers a cache directory that exists but
+// cannot be written into.
+func TestAuthenticatorCacheFileUnwritable(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	dir := filepath.Join(t.TempDir(), "cache")
+	require.NoError(t, os.MkdirAll(dir, 0o500))
+
+	var challenge string
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: dir,
+		Browser:  browser(t, &challenge, nil),
+	}
+
+	_, err := auth.Token(context.Background(), []string{"openid"})
+
+	assert.Error(err)
 }

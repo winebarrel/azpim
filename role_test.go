@@ -326,3 +326,33 @@ func TestRoleRequestsCmd(t *testing.T) {
 	assert.Equal("5", query.Get("$top"))
 	assert.Equal("createdDateTime desc", query.Get("$orderby"))
 }
+
+// TestRoleRequestRejected covers the service refusing a request that was built
+// correctly, which is what exceeding the role's policy looks like.
+func TestRoleRequestRejected(t *testing.T) {
+	rejection := `400|{"error":{"code":"RoleAssignmentRequestPolicyValidationFailed",` +
+		`"message":"The duration exceeds the maximum allowed."}}`
+
+	tests := map[string]func(*azpim.Context) error{
+		"activate": func(c *azpim.Context) error {
+			return (&azpim.RoleActivateCmd{Role: "global reader", Duration: "99h"}).Run(c)
+		},
+		"deactivate": func(c *azpim.Context) error {
+			return (&azpim.RoleDeactivateCmd{Role: "global reader"}).Run(c)
+		},
+	}
+
+	for name, run := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			stub := newGraphStub(t, map[string]string{
+				"roleEligibilityScheduleInstances": eligibleRoles,
+				"roleAssignmentScheduleRequests":   rejection,
+			})
+
+			err := run(stub.context(&bytes.Buffer{}, &bytes.Buffer{}))
+
+			assert.ErrorContains(err, "RoleAssignmentRequestPolicyValidationFailed")
+		})
+	}
+}

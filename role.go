@@ -109,7 +109,9 @@ func (cmd *RoleListCmd) Run(cmdCtx *Context) error {
 		})
 	}
 
-	return writeTable(cmdCtx.Output, []string{"ROLE", "SCOPE", "MEMBER TYPE", "EXPIRES"}, rows)
+	writeTable(cmdCtx.Output, []string{"ROLE", "SCOPE", "MEMBER TYPE", "EXPIRES"}, rows)
+
+	return nil
 }
 
 // RoleActiveCmd lists the roles currently assigned to the signed-in user.
@@ -145,7 +147,9 @@ func (cmd *RoleActiveCmd) Run(cmdCtx *Context) error {
 		})
 	}
 
-	return writeTable(cmdCtx.Output, []string{"ROLE", "TYPE", "SCOPE", "ENDS"}, rows)
+	writeTable(cmdCtx.Output, []string{"ROLE", "TYPE", "SCOPE", "ENDS"}, rows)
+
+	return nil
 }
 
 // RoleRequestsCmd lists recent activation requests.
@@ -190,7 +194,9 @@ func (cmd *RoleRequestsCmd) Run(cmdCtx *Context) error {
 		})
 	}
 
-	return writeTable(cmdCtx.Output, []string{"CREATED", "ROLE", "ACTION", "STATUS"}, rows)
+	writeTable(cmdCtx.Output, []string{"CREATED", "ROLE", "ACTION", "STATUS"}, rows)
+
+	return nil
 }
 
 // RoleActivateCmd activates a role the signed-in user is eligible for.
@@ -239,7 +245,9 @@ func (cmd *RoleActivateCmd) Run(cmdCtx *Context) error {
 		return err
 	}
 
-	return reportRequest(cmdCtx, schedule.name(), duration, result.Status)
+	reportRequest(cmdCtx, schedule.name(), duration, result.Status)
+
+	return nil
 }
 
 // RoleDeactivateCmd gives up a role before it expires.
@@ -274,9 +282,9 @@ func (cmd *RoleDeactivateCmd) Run(cmdCtx *Context) error {
 		return err
 	}
 
-	_, err = fmt.Fprintf(cmdCtx.ErrOutput, "deactivated %s (%s)\n", schedule.name(), result.Status)
+	fmt.Fprintf(cmdCtx.ErrOutput, "deactivated %s (%s)\n", schedule.name(), result.Status) //nolint:errcheck
 
-	return err
+	return nil
 }
 
 // findRole resolves a query against the roles the user is eligible for.

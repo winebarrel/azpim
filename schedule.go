@@ -52,16 +52,10 @@ func displayEnd(end string) string {
 //
 // A request that needs an approver is accepted rather than refused, so saying
 // only that it succeeded would imply an access the user does not yet have.
-func reportRequest(cmdCtx *Context, name string, duration string, status string) error {
-	if _, err := fmt.Fprintf(cmdCtx.ErrOutput, "requested %s for %s (%s)\n", name, duration, status); err != nil {
-		return err
-	}
+func reportRequest(cmdCtx *Context, name string, duration string, status string) {
+	fmt.Fprintf(cmdCtx.ErrOutput, "requested %s for %s (%s)\n", name, duration, status) //nolint:errcheck
 
 	if status == "PendingApproval" {
-		_, err := fmt.Fprintln(cmdCtx.ErrOutput, "an approver must act on this before the access applies; follow it with the requests command")
-
-		return err
+		fmt.Fprintln(cmdCtx.ErrOutput, "an approver must act on this before the access applies; follow it with the requests command") //nolint:errcheck
 	}
-
-	return nil
 }

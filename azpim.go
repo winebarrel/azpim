@@ -48,20 +48,19 @@ type Context struct {
 }
 
 // writeTable renders rows under a header, padded into columns.
-func writeTable(w io.Writer, header []string, rows [][]string) error {
+//
+// A destination that cannot be written to is not something a command can do
+// anything about, so the writes are not checked.
+func writeTable(w io.Writer, header []string, rows [][]string) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 
-	if _, err := fmt.Fprintln(tw, strings.Join(header, "\t")); err != nil {
-		return err
-	}
+	fmt.Fprintln(tw, strings.Join(header, "\t")) //nolint:errcheck
 
 	for _, row := range rows {
-		if _, err := fmt.Fprintln(tw, strings.Join(row, "\t")); err != nil {
-			return err
-		}
+		fmt.Fprintln(tw, strings.Join(row, "\t")) //nolint:errcheck
 	}
 
-	return tw.Flush()
+	tw.Flush() //nolint:errcheck
 }
 
 // matchOne picks the single item whose name contains query, ignoring case.
