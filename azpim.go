@@ -63,10 +63,15 @@ func writeTable(w io.Writer, header []string, rows [][]string) {
 	tw.Flush() //nolint:errcheck
 }
 
-// matchOne picks the single item whose name contains query, ignoring case.
+// matchOne picks the single item whose name equals query, ignoring case.
 //
-// Activating the wrong role is not a mistake worth being relaxed about, so an
-// ambiguous query is an error listing the candidates rather than a guess at
+// The match is exact rather than a substring one because role names contain
+// each other, which left the shorter name of such a pair ambiguous however
+// completely it was written out, and so impossible to name at all.
+//
+// Activating the wrong role is not a mistake worth being relaxed about, so a
+// query that still matches more than one item -- a group held as both member
+// and owner, say -- is an error listing the candidates rather than a guess at
 // which one was meant.
 func matchOne[T any](items []T, query string, name func(T) string) (T, error) {
 	var zero T
@@ -74,7 +79,7 @@ func matchOne[T any](items []T, query string, name func(T) string) (T, error) {
 	hits := []T{}
 
 	for _, item := range items {
-		if strings.Contains(strings.ToLower(name(item)), strings.ToLower(query)) {
+		if strings.EqualFold(name(item), query) {
 			hits = append(hits, item)
 		}
 	}
@@ -83,7 +88,7 @@ func matchOne[T any](items []T, query string, name func(T) string) (T, error) {
 	case 1:
 		return hits[0], nil
 	case 0:
-		return zero, fmt.Errorf("no eligible assignment matches %q; run the list command to see what is available", query)
+		return zero, fmt.Errorf("no eligible assignment is named %q; run the list command to see what is available", query)
 	default:
 		names := make([]string, len(hits))
 		for i, hit := range hits {

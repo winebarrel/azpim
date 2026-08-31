@@ -16,8 +16,8 @@ import (
 )
 
 // eligibleRoles is what the eligibility endpoint answers with in these tests.
-// The values are made up; two of the names overlap on purpose, so that an
-// ambiguous query can be exercised.
+// The values are made up; one name contains another on purpose, since that is
+// the case an exact match exists to resolve.
 const eligibleRoles = `{"value":[
   {"id":"elig-1","principalId":"user-1","roleDefinitionId":"role-helpdesk",
    "directoryScopeId":"/","memberType":"Direct",
@@ -28,7 +28,10 @@ const eligibleRoles = `{"value":[
   {"id":"elig-3","principalId":"user-1","roleDefinitionId":"role-global-reader",
    "directoryScopeId":"/administrativeUnits/au-1","memberType":"Group",
    "endDateTime":"2027-01-01T00:00:00Z",
-   "roleDefinition":{"displayName":"Global Reader"}}
+   "roleDefinition":{"displayName":"Global Reader"}},
+  {"id":"elig-4","principalId":"user-1","roleDefinitionId":"role-reader",
+   "directoryScopeId":"/","memberType":"Direct",
+   "roleDefinition":{"displayName":"Reader"}}
 ]}`
 
 // graphStub stands in for Graph. Requests land in *captured and *queries so a
@@ -157,18 +160,27 @@ func TestRoleActivateCmd(t *testing.T) {
 			errOut:   "an approver must act on this",
 		},
 		{
-			// "Helpdesk Administrator" and "User Administrator" both contain
-			// the query. Guessing would activate the wrong role.
-			name:     "ambiguous name",
+			// "Global Reader" contains the query, so only an exact match can
+			// activate the role that is named by it.
+			name:     "name contained in another name",
+			role:     "reader",
+			duration: "2h",
+			status:   "Provisioned",
+			errOut:   "requested Reader for PT2H (Provisioned)",
+		},
+		{
+			// A word several roles share is not a query, since guessing would
+			// activate the wrong role.
+			name:     "partial name",
 			role:     "administrator",
 			duration: "2h",
-			errMsg:   "matches more than one",
+			errMsg:   "no eligible assignment is named",
 		},
 		{
 			name:     "no match",
 			role:     "global administrator",
 			duration: "2h",
-			errMsg:   "no eligible assignment matches",
+			errMsg:   "no eligible assignment is named",
 		},
 		{
 			name:     "bad duration",
