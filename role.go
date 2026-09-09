@@ -8,17 +8,19 @@ import (
 
 // RoleScopes are the delegated scopes the role commands sign in for.
 //
-// RoleManagement.ReadWrite.Directory covers both reading the eligibility
-// schedules and writing the assignment requests.
-// RoleAssignmentSchedule.ReadWrite.Directory would serve the write side just as
-// well, but tenants that have consented to Graph PowerShell at all tend to have
-// granted the former.
+// The eligibility schedules are read under one scope and the assignment
+// requests written under another, which together cover everything the role
+// commands do. RoleManagement.ReadWrite.Directory would cover both on its own,
+// and tenants that have consented to Graph PowerShell tend to have granted it,
+// but it also carries write access to every other directory RBAC setting.
+// Asking for the narrower pair keeps a tenant that consents to azpim from
+// consenting to more than azpim uses.
 var RoleScopes = []string{
 	"openid",
 	"profile",
 	"offline_access",
 	"RoleEligibilitySchedule.Read.Directory",
-	"RoleManagement.ReadWrite.Directory",
+	"RoleAssignmentSchedule.ReadWrite.Directory",
 }
 
 const rolePath = "/roleManagement/directory"

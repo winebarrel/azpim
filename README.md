@@ -135,13 +135,13 @@ Tokens are cached per scope set for the same reason.
 Directory roles:
 
 - `RoleEligibilitySchedule.Read.Directory`
-- `RoleManagement.ReadWrite.Directory`
+- `RoleAssignmentSchedule.ReadWrite.Directory`
 
 Groups:
 
 - `PrivilegedEligibilitySchedule.Read.AzureADGroup`
 - `PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup`
-- `Directory.Read.All` (only to turn group ids into names)
+- `Group.Read.All` (only to turn group ids into names)
 
 All of these require admin consent. Note that `PrivilegedAccess.*.AzureAD` and
 `PrivilegedAccess.*.AzureADGroup` are different scopes despite the names: consent
@@ -149,8 +149,10 @@ to the former grants nothing over groups.
 
 If a command fails with `PermissionScopeNotGranted`, the error names the scopes
 the tenant is missing. Use `--scope` to request a different set — for example
-when the tenant has consented to `RoleAssignmentSchedule.ReadWrite.Directory`
-instead of `RoleManagement.ReadWrite.Directory`.
+when the tenant has consented to the broader `RoleManagement.ReadWrite.Directory`
+or `Directory.Read.All` instead of the narrower scopes above, which is common in
+tenants that reached their consent through Graph PowerShell rather than through
+an application registered for azpim.
 
 ## Approvals
 
