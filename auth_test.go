@@ -309,6 +309,53 @@ func TestAuthenticatorScopesKeyTheCache(t *testing.T) {
 	assert.Len(entries, 2, "each scope set gets its own cache entry")
 }
 
+// TestAuthenticatorClientIDKeysTheCache covers switching --client-id with the
+// tenant and scopes left alone, which is what moving off the default
+// application looks like. A token belongs to the application it was issued to,
+// so reusing the previous one would keep signing in through the very
+// application the switch is meant to stop using.
+func TestAuthenticatorClientIDKeysTheCache(t *testing.T) {
+	assert := assert.New(t)
+	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)
+
+	var challenge string
+
+	signIns := 0
+	dir := t.TempDir()
+	scopes := []string{"openid", "Scope.One"}
+
+	auth := &azpim.Authenticator{
+		TenantID: "tenant-1",
+		ClientID: "client-1",
+		Endpoint: stub.server.URL,
+		CacheDir: dir,
+	}
+
+	auth.Browser = func(target string) error {
+		signIns++
+
+		return browser(t, &challenge, nil)(target)
+	}
+
+	_, err := auth.Token(context.Background(), scopes)
+	require.NoError(t, err)
+	assert.Equal("client-1", stub.form.Get("client_id"))
+
+	auth.ClientID = "client-2"
+
+	_, err = auth.Token(context.Background(), scopes)
+	require.NoError(t, err)
+
+	assert.Equal(2, signIns)
+	// The second token was redeemed for the new application rather than read
+	// back from the first one's cache entry.
+	assert.Equal("client-2", stub.form.Get("client_id"))
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(entries, 2, "each application gets its own cache entry")
+}
+
 func TestAuthenticatorCachePermissions(t *testing.T) {
 	assert := assert.New(t)
 	stub := newTokenStub(t, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`)

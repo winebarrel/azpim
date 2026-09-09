@@ -114,7 +114,8 @@ func (a *Authenticator) errOutput() io.Writer {
 	return io.Discard
 }
 
-// cachePath names the cache file for a scope set and claims challenge.
+// cachePath names the cache file for an application, scope set and claims
+// challenge.
 //
 // The scopes are part of the name because a cached token is only useful for
 // the scopes it was issued with. Keying on them means asking for a different
@@ -123,6 +124,17 @@ func (a *Authenticator) errOutput() io.Writer {
 // issued for a challenge is a different token, and filing it separately keeps
 // it from being handed to a plain call, and keeps the plain token from being
 // handed back to the challenge that just refused it.
+//
+// The application is keyed for the same reason again. A token is issued to the
+// application that asked for it, so one obtained through --client-id is not
+// interchangeable with one obtained through another, even for identical scopes
+// in the same tenant: the two applications are consented separately and the
+// audience differs. Leaving it out let switching --client-id hand back the
+// previous application's token, which is exactly the case where the caller is
+// trying to stop using that application.
+//
+// The parts are joined by newlines, which none of them can contain, so that no
+// two different keys can render to the same string.
 func (a *Authenticator) cachePath(scopes []string, claims string) (string, error) {
 	dir := a.CacheDir
 
@@ -136,10 +148,10 @@ func (a *Authenticator) cachePath(scopes []string, claims string) (string, error
 		dir = filepath.Join(base, "azpim")
 	}
 
-	key := strings.Join(scopes, " ")
+	key := a.ClientID + "\n" + strings.Join(scopes, " ")
 
 	if claims != "" {
-		key += " " + claims
+		key += "\n" + claims
 	}
 
 	sum := sha256.Sum256([]byte(key))
