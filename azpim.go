@@ -8,7 +8,9 @@
 // Entra ID directory roles and PIM for Groups live behind separate Microsoft
 // Graph APIs and separate consent scopes, so each command asks only for the
 // scopes its own area needs. A tenant that has consented to one area therefore
-// keeps working in that area even if the other is unavailable.
+// keeps working in that area even if the other is unavailable. Separate scopes
+// are not separate sign-ins: one sign-in serves both areas, since the refresh
+// token it leaves behind is redeemable for either.
 package azpim
 
 import (
