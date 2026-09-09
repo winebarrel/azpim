@@ -130,18 +130,24 @@ your own with the scopes below and pass `--client-id`.
 
 Each command asks for only the scopes its own area needs, so a tenant that has
 consented to one area keeps working there even if the other is unavailable.
-Tokens are cached per scope set for the same reason.
+Access tokens are cached per scope set for the same reason.
+
+Signing in is not per area, though. The refresh token is kept per application,
+which is what it is issued as, so the first sign-in covers both areas: asking
+for the other one redeems that same refresh token for its scopes without opening
+a browser. An area the tenant has not consented to is refused at that point and
+falls back to a sign-in, which is where the refusal can be seen.
 
 Directory roles:
 
 - `RoleEligibilitySchedule.Read.Directory`
-- `RoleManagement.ReadWrite.Directory`
+- `RoleAssignmentSchedule.ReadWrite.Directory`
 
 Groups:
 
 - `PrivilegedEligibilitySchedule.Read.AzureADGroup`
 - `PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup`
-- `Directory.Read.All` (only to turn group ids into names)
+- `Group.Read.All` (only to turn group ids into names)
 
 All of these require admin consent. Note that `PrivilegedAccess.*.AzureAD` and
 `PrivilegedAccess.*.AzureADGroup` are different scopes despite the names: consent
@@ -149,8 +155,10 @@ to the former grants nothing over groups.
 
 If a command fails with `PermissionScopeNotGranted`, the error names the scopes
 the tenant is missing. Use `--scope` to request a different set — for example
-when the tenant has consented to `RoleAssignmentSchedule.ReadWrite.Directory`
-instead of `RoleManagement.ReadWrite.Directory`.
+when the tenant has consented to the broader `RoleManagement.ReadWrite.Directory`
+or `Directory.Read.All` instead of the narrower scopes above, which is common in
+tenants that reached their consent through Graph PowerShell rather than through
+an application registered for azpim.
 
 ## Approvals
 

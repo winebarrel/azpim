@@ -10,15 +10,17 @@ import (
 //
 // These are distinct from the AzureAD scopes the role commands use: consenting
 // to PrivilegedAccess.ReadWrite.AzureAD grants nothing over groups, despite the
-// names being a character apart. Directory.Read.All is here only to turn group
-// ids into names.
+// names being a character apart. Group.Read.All is here only to turn group ids
+// into names, which is the one thing these resources cannot do themselves:
+// Directory.Read.All would serve as well and is more likely to be consented
+// already, but it reads far more of the directory than a name lookup needs.
 var GroupScopes = []string{
 	"openid",
 	"profile",
 	"offline_access",
 	"PrivilegedEligibilitySchedule.Read.AzureADGroup",
 	"PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup",
-	"Directory.Read.All",
+	"Group.Read.All",
 }
 
 const groupPath = "/identityGovernance/privilegedAccess/group"

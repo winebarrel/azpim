@@ -75,10 +75,13 @@ func (a *Authenticator) Client(ctx context.Context, scopes []string) (*Client, e
 }
 
 // cachedToken is what is persisted between runs.
+//
+// Access tokens and the refresh token are filed separately, so each entry
+// carries only the fields its own kind uses.
 type cachedToken struct {
-	AccessToken  string `json:"access_token"`
+	AccessToken  string `json:"access_token,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
-	ExpiresAt    int64  `json:"expires_at"`
+	ExpiresAt    int64  `json:"expires_at,omitempty"`
 }
 
 // tokenResponse is the identity platform's reply at the token endpoint.
@@ -114,38 +117,69 @@ func (a *Authenticator) errOutput() io.Writer {
 	return io.Discard
 }
 
-// cachePath names the cache file for a scope set and claims challenge.
-//
-// The scopes are part of the name because a cached token is only useful for
-// the scopes it was issued with. Keying on them means asking for a different
-// area re-authenticates instead of silently reusing a token that Graph will
-// reject. Claims are keyed the same way and for the same reason: a token
-// issued for a challenge is a different token, and filing it separately keeps
-// it from being handed to a plain call, and keeps the plain token from being
-// handed back to the challenge that just refused it.
-func (a *Authenticator) cachePath(scopes []string, claims string) (string, error) {
-	dir := a.CacheDir
-
-	if dir == "" {
-		base, err := os.UserCacheDir()
-
-		if err != nil {
-			return "", err
-		}
-
-		dir = filepath.Join(base, "azpim")
+// cacheDir is where tokens are kept between runs.
+func (a *Authenticator) cacheDir() (string, error) {
+	if a.CacheDir != "" {
+		return a.CacheDir, nil
 	}
 
-	key := strings.Join(scopes, " ")
+	base, err := os.UserCacheDir()
+
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(base, "azpim"), nil
+}
+
+// cacheName names the file holding what the given key identifies.
+//
+// The tenant is spelled out so that a machine used against more than one stays
+// legible on disk. The rest is digested, since a scope list is far too long to
+// be a file name.
+func (a *Authenticator) cacheName(key string) string {
+	sum := sha256.Sum256([]byte(key))
+
+	return fmt.Sprintf("%s-%s.json", a.TenantID, base64.RawURLEncoding.EncodeToString(sum[:6]))
+}
+
+// tokenKey identifies an access token.
+//
+// The scopes are part of it because a cached token is only useful for the
+// scopes it was issued with. Keying on them means asking for a different area
+// gets a token for that area instead of silently reusing one that Graph will
+// reject. Claims are keyed the same way and for the same reason: a token issued
+// for a challenge is a different token, and filing it separately keeps it from
+// being handed to a plain call, and keeps the plain token from being handed
+// back to the challenge that just refused it.
+//
+// The application is keyed for the same reason again. A token is issued to the
+// application that asked for it, so one obtained through --client-id is not
+// interchangeable with one obtained through another, even for identical scopes
+// in the same tenant: the two applications are consented separately and the
+// audience differs.
+//
+// The parts are joined by newlines, which none of them can contain, so that no
+// two different keys can render to the same string.
+func (a *Authenticator) tokenKey(scopes []string, claims string) string {
+	key := "token\n" + a.ClientID + "\n" + strings.Join(scopes, " ")
 
 	if claims != "" {
-		key += " " + claims
+		key += "\n" + claims
 	}
 
-	sum := sha256.Sum256([]byte(key))
-	name := fmt.Sprintf("%s-%s.json", a.TenantID, base64.RawURLEncoding.EncodeToString(sum[:6]))
+	return key
+}
 
-	return filepath.Join(dir, name), nil
+// refreshKey identifies the refresh token, which is kept per application and
+// tenant rather than per scope set.
+//
+// The identity platform issues one refresh token per application and will
+// redeem it for any scopes that application has been consented, so the scopes
+// it happened to be obtained alongside say nothing about what it can fetch.
+// Filing it per scope set was what made each area its own sign-in.
+func (a *Authenticator) refreshKey() string {
+	return "refresh\n" + a.ClientID
 }
 
 // Token returns an access token for the given scopes, reusing a cached one and
@@ -163,30 +197,24 @@ func (a *Authenticator) Token(ctx context.Context, scopes []string) (string, err
 // into the token. A refresh cannot do that, so a challenge goes straight to
 // the browser rather than trying silently first.
 func (a *Authenticator) TokenWithClaims(ctx context.Context, scopes []string, claims string) (string, error) {
-	path, err := a.cachePath(scopes, claims)
+	dir, err := a.cacheDir()
 
 	if err != nil {
 		return "", err
 	}
 
-	cached := readCache(path)
+	path := filepath.Join(dir, a.cacheName(a.tokenKey(scopes, claims)))
+	refreshPath := filepath.Join(dir, a.cacheName(a.refreshKey()))
 
 	// The margin keeps a token from expiring between this check and the call
 	// it is about to be used for.
-	if cached != nil && cached.ExpiresAt > time.Now().Add(2*time.Minute).Unix() {
+	if cached := readCache(path); cached != nil && cached.ExpiresAt > time.Now().Add(2*time.Minute).Unix() {
 		return cached.AccessToken, nil
 	}
 
-	if cached != nil && cached.RefreshToken != "" && claims == "" {
-		token, err := a.redeem(ctx, url.Values{
-			"grant_type":    {"refresh_token"},
-			"client_id":     {a.ClientID},
-			"refresh_token": {cached.RefreshToken},
-			"scope":         {strings.Join(scopes, " ")},
-		})
-
-		if err == nil {
-			return a.store(path, token)
+	if claims == "" {
+		if token := a.refresh(ctx, refreshPath, scopes); token != nil {
+			return a.store(path, refreshPath, token)
 		}
 	}
 
@@ -196,15 +224,59 @@ func (a *Authenticator) TokenWithClaims(ctx context.Context, scopes []string, cl
 		return "", err
 	}
 
-	return a.store(path, token)
+	return a.store(path, refreshPath, token)
 }
 
-func (a *Authenticator) store(path string, token *tokenResponse) (string, error) {
+// refresh trades the stored refresh token for an access token carrying the
+// given scopes, or reports nothing when it cannot.
+//
+// This is what keeps signing in for one area from being a second sign-in: the
+// other area redeems the same refresh token silently, without a browser. An
+// area the tenant has not consented to is refused here, and falls through to a
+// sign-in, which is where the refusal can be seen and answered.
+//
+// A failure is not distinguished from an absence. Whether the token is missing,
+// expired, revoked or short of the scopes asked for, the answer is the same one:
+// sign in again.
+func (a *Authenticator) refresh(ctx context.Context, path string, scopes []string) *tokenResponse {
+	cached := readCache(path)
+
+	if cached == nil || cached.RefreshToken == "" {
+		return nil
+	}
+
+	token, err := a.redeem(ctx, url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {a.ClientID},
+		"refresh_token": {cached.RefreshToken},
+		"scope":         {strings.Join(scopes, " ")},
+	})
+
+	if err != nil {
+		return nil
+	}
+
+	return token
+}
+
+// store files the access token under its own key, and the refresh token that
+// came with it under the application's, where any scope set can find it.
+//
+// A rotated refresh token replaces the one that was used, so the stored one is
+// always the newest the identity platform has handed out.
+func (a *Authenticator) store(path, refreshPath string, token *tokenResponse) (string, error) {
 	if err := writeCache(path, &cachedToken{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    time.Now().Add(time.Duration(token.ExpiresIn) * time.Second).Unix(),
+		AccessToken: token.AccessToken,
+		ExpiresAt:   time.Now().Add(time.Duration(token.ExpiresIn) * time.Second).Unix(),
 	}); err != nil {
+		return "", err
+	}
+
+	if token.RefreshToken == "" {
+		return token.AccessToken, nil
+	}
+
+	if err := writeCache(refreshPath, &cachedToken{RefreshToken: token.RefreshToken}); err != nil {
 		return "", err
 	}
 
