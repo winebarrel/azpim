@@ -68,6 +68,7 @@ type roleRequest struct {
 	RoleDefinitionID string        `json:"roleDefinitionId"`
 	DirectoryScopeID string        `json:"directoryScopeId"`
 	Justification    string        `json:"justification,omitempty"`
+	TicketInfo       *ticketInfo   `json:"ticketInfo,omitempty"`
 	ScheduleInfo     *scheduleInfo `json:"scheduleInfo,omitempty"`
 }
 
@@ -203,6 +204,8 @@ func (cmd *RoleRequestsCmd) Run(cmdCtx *Context) error {
 
 // RoleActivateCmd activates a role the signed-in user is eligible for.
 type RoleActivateCmd struct {
+	Ticket
+
 	Role          string `arg:"" help:"Role to activate, matched against the display name."`
 	Duration      string `short:"d" default:"8h" help:"How long to hold the role, as a Go duration or ISO 8601."`
 	Justification string `short:"j" default:"activated with azpim" help:"Reason recorded with the request."`
@@ -238,6 +241,7 @@ func (cmd *RoleActivateCmd) Run(cmdCtx *Context) error {
 		RoleDefinitionID: schedule.RoleDefinitionID,
 		DirectoryScopeID: schedule.DirectoryScopeID,
 		Justification:    cmd.Justification,
+		TicketInfo:       cmd.info(),
 		ScheduleInfo:     newScheduleInfo(duration),
 	}
 

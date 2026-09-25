@@ -70,6 +70,7 @@ type groupRequest struct {
 	PrincipalID   string        `json:"principalId"`
 	AccessID      string        `json:"accessId"`
 	Justification string        `json:"justification,omitempty"`
+	TicketInfo    *ticketInfo   `json:"ticketInfo,omitempty"`
 	ScheduleInfo  *scheduleInfo `json:"scheduleInfo,omitempty"`
 }
 
@@ -251,6 +252,7 @@ func (cmd *GroupRequestsCmd) Run(cmdCtx *Context) error {
 // GroupActivateCmd activates a group membership.
 type GroupActivateCmd struct {
 	AccessFilter
+	Ticket
 
 	Group         string `arg:"" help:"Group to activate, matched against the display name."`
 	Duration      string `short:"d" default:"8h" help:"How long to hold the membership, as a Go duration or ISO 8601."`
@@ -284,6 +286,7 @@ func (cmd *GroupActivateCmd) Run(cmdCtx *Context) error {
 		PrincipalID:   schedule.PrincipalID,
 		AccessID:      schedule.AccessID,
 		Justification: cmd.Justification,
+		TicketInfo:    cmd.info(),
 		ScheduleInfo:  newScheduleInfo(duration),
 	}
 
