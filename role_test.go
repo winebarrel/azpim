@@ -244,6 +244,30 @@ func TestRoleActivateCmdRequest(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(map[string]any{"type": "AfterDuration", "duration": "PT2H"}, schedule["expiration"])
 	assert.NotEmpty(schedule["startDateTime"])
+
+	// No ticket was given, so none is sent for a policy that does not ask for one.
+	assert.NotContains(stub.captured, "ticketInfo")
+}
+
+func TestRoleActivateCmdTicket(t *testing.T) {
+	assert := assert.New(t)
+	stub := newGraphStub(t, map[string]string{
+		"roleEligibilityScheduleInstances": eligibleRoles,
+		"roleAssignmentScheduleRequests":   `{"id":"req-1","status":"Provisioned"}`,
+	})
+
+	cmd := &azpim.RoleActivateCmd{
+		Ticket:        azpim.Ticket{TicketNumber: "INC-1234"},
+		Role:          "global reader",
+		Duration:      "2h",
+		Justification: "because",
+	}
+	err := cmd.Run(stub.context(&bytes.Buffer{}, &bytes.Buffer{}))
+
+	assert.NoError(err)
+	require.NotNil(t, stub.captured)
+	// Only what was given is sent; an empty system is left out, not sent blank.
+	assert.Equal(map[string]any{"ticketNumber": "INC-1234"}, stub.captured["ticketInfo"])
 }
 
 func TestRoleDeactivateCmd(t *testing.T) {

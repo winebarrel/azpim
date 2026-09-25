@@ -165,3 +165,19 @@ an application registered for azpim.
 A role whose policy requires approval answers with `PendingApproval` rather than
 refusing. azpim says so explicitly, because an accepted request is not the same
 as access. Follow it with `azpim role requests`.
+
+## Tickets
+
+A policy can require ticket information on activation. Pass it with
+`--ticket-number` and `--ticket-system`, on `role activate` and `group activate`
+alike:
+
+```
+$ azpim group activate db-admins --justification "INC-1234 investigation" \
+    --ticket-number INC-1234 --ticket-system Jira
+```
+
+The system rarely changes, so it can also come from `$AZPIM_TICKET_SYSTEM`.
+PIM records both with the request but checks neither against anything; they are
+free text. When neither is given, no ticket is sent, which is what a policy
+that does not ask for one expects.

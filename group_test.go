@@ -191,6 +191,30 @@ func TestGroupActivateCmdRequest(t *testing.T) {
 	schedule, ok := stub.captured["scheduleInfo"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(map[string]any{"type": "AfterDuration", "duration": "PT1H30M"}, schedule["expiration"])
+
+	// No ticket was given, so none is sent for a policy that does not ask for one.
+	assert.NotContains(stub.captured, "ticketInfo")
+}
+
+func TestGroupActivateCmdTicket(t *testing.T) {
+	assert := assert.New(t)
+	stub := newGraphStub(t, groupRoutes(map[string]string{
+		"assignmentScheduleRequests": `{"id":"req-1","status":"Provisioned"}`,
+	}))
+
+	cmd := &azpim.GroupActivateCmd{
+		AccessFilter:  azpim.AccessFilter{Access: "member"},
+		Ticket:        azpim.Ticket{TicketNumber: "INC-1234", TicketSystem: "Jira"},
+		Group:         "db-admins",
+		Duration:      "1h",
+		Justification: "incident",
+	}
+
+	err := cmd.Run(stub.context(&bytes.Buffer{}, &bytes.Buffer{}))
+
+	assert.NoError(err)
+	require.NotNil(t, stub.captured)
+	assert.Equal(map[string]any{"ticketNumber": "INC-1234", "ticketSystem": "Jira"}, stub.captured["ticketInfo"])
 }
 
 func TestGroupDeactivateCmd(t *testing.T) {
