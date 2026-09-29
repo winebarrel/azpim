@@ -5,7 +5,7 @@ package azpim
 // A PIM policy can require one. PIM records the number and the system with the
 // request but checks neither against anything, so both are free text.
 type Ticket struct {
-	TicketNumber string `help:"Ticket number recorded with the request, for policies that require one."`
+	TicketNumber string `short:"t" help:"Ticket number recorded with the request, for policies that require one."`
 	TicketSystem string `env:"AZPIM_TICKET_SYSTEM" help:"Ticket system recorded with the request, for policies that require one."`
 }
 
